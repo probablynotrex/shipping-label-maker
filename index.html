@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shipping Label Generator</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <style>
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #2d3748;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #4a5568;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #718096;
+        }
+        #pdf-preview-iframe {
+            width: 100%;
+            height: 70vh;
+            border: none;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-100 font-sans p-4 md:p-8">
+
+    <div class="max-w-2xl mx-auto bg-gray-800 p-6 md:p-10 rounded-2xl shadow-2xl">
+        <h1 class="text-3xl md:text-4xl font-bold text-center text-white mb-8">
+            Shipping Label Generator
+        </h1>
+
+        <form id="label-form" class="space-y-6">
+
+            <div class="space-y-6">
+                <div>
+                    <label for="consignee-name" class="block mb-2 text-sm font-medium text-gray-300">Consignee Name</label>
+                    <input type="text" id="consignee-name" class="bg-gray-700 border border-gray-600 text-white text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5" placeholder="Client Company Ltd." required>
+                </div>
+                <div>
+                    <label for="exporter-name" class="block mb-2 text-sm font-medium text-gray-300">Exporter Name</label>
+                    <input type="text" id="exporter-name" class="bg-gray-700 border border-gray-600 text-white text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5" placeholder="Your Company LLC" required>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                    <label for="invoice-num" class="block mb-2 text-sm font-medium text-gray-300">Invoice Number</label>
+                    <input type="text" id="invoice-num" class="bg-gray-700 border border-gray-600 text-white text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5" placeholder="INV-001" required>
+                </div>
+                <div>
+                    <label for="packet-range" class="block mb-2 text-sm font-medium text-gray-300">Packet Range</label>
+                    <input type="text" id="packet-range" class="bg-gray-700 border border-gray-600 text-white text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5" placeholder="e.g., 1-25/180 or 152/188" required>
+                </div>
+            </div>
+            
+            <div class="text-xs text-gray-400 -mt-3 text-center md:text-right px-1">
+                Format: (Start-End/Total) or (Single/Total)
+            </div>
+
+            <div id="error-message" class="text-red-400 text-sm font-medium text-center empty:hidden"></div>
+
+            <div class="border-t border-gray-700 pt-6">
+                <button type="submit" class="w-full px-5 py-3 text-lg font-medium text-center text-white bg-blue-600 rounded-lg hover:bg-blue-700 focus:ring-4 focus:outline-none focus:ring-blue-800 transition-all duration-200">
+                    Generate Preview
+                </button>
+            </div>
+        </form>
+    </div>
+
+    <div id="preview-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-75 hidden">
+        <div class="bg-gray-800 rounded-2xl shadow-xl w-full max-w-4xl max-h-[90vh] flex flex-col m-4">
+            <div class="flex justify-between items-center p-4 border-b border-gray-700">
+                <h3 class="text-xl font-semibold text-white">PDF Preview</h3>
+                <button id="close-modal-btn" class="text-gray-400 hover:text-white text-3xl leading-none">&times;</button>
+            </div>
+            <div class="p-4 flex-grow overflow-y-auto bg-gray-900">
+                <iframe id="pdf-preview-iframe" class="w-full h-[70vh]" src="about:blank"></iframe>
+            </div>
+            <div class="flex justify-end items-center p-4 border-t border-gray-700 space-x-4">
+                <button id="close-modal-footer-btn" class="px-5 py-2 text-sm font-medium text-gray-300 bg-gray-600 rounded-lg hover:bg-gray-700">
+                    Close
+                </button>
+                <button id="download-pdf-btn" class="px-5 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">
+                    Download PDF
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            if (!window.jspdf) {
+                console.error("jsPDF library is not loaded!");
+                return;
+            }
+            const { jsPDF } = window.jspdf;
+
+            const labelForm = document.getElementById('label-form');
+            const errorDiv = document.getElementById('error-message');
+
+            const modal = document.getElementById('preview-modal');
+            const closeModalBtn = document.getElementById('close-modal-btn');
+            const closeModalFooterBtn = document.getElementById('close-modal-footer-btn');
+            const downloadPdfBtn = document.getElementById('download-pdf-btn');
+            const pdfPreviewIframe = document.getElementById('pdf-preview-iframe');
+
+            let generatedDoc = null;
+            let generatedFilename = 'labels.pdf';
+            function parsePacketRange(rangeStr) {
+                const regex = /^(\d+)(?:-(\d+))?\/(\d+)$/;
+                const match = rangeStr.trim().match(regex);
+                
+                if (!match) {
+                    throw new Error("Invalid format. Use '1-25/180' or '152/188'.");
+                }
+                
+                const start = parseInt(match[1], 10);
+                const end = match[2] ? parseInt(match[2], 10) : start;
+                const total = parseInt(match[3], 10);
+                
+                if (start <= 0 || end < start || total < end) {
+                    throw new Error("Invalid range: Start must be > 0, End must be >= Start, and Total must be >= End.");
+                }
+                
+                return { start, end, total };
+            }
+
+
+            function createSingleLabelPage(doc, data, packetNum, total) {
+                const { consigneeName, exporterName, invoiceNum } = data;
+                
+                const pageHeight = doc.internal.pageSize.getHeight();
+                const pageWidth = doc.internal.pageSize.getWidth();
+                
+                const margin = 1;
+                const innerWidth = pageWidth - (margin * 2);
+                const innerHeight = pageHeight - (margin * 2);
+                
+                doc.setLineWidth(0.1);
+                doc.setDrawColor(0, 0, 0);
+                doc.rect(margin, margin, innerWidth, innerHeight);
+
+                let y = margin + 1.5; 
+                const x = margin + 0.8; 
+
+                doc.setFont('helvetica', 'bold');
+                doc.setFontSize(28);
+                doc.text("Consignee", x, y);
+                y += 1.2;
+                
+                doc.setFont('helvetica', 'normal');
+                doc.setFontSize(28);
+                doc.text(consigneeName, x, y);
+                y += 1.5;
+
+                doc.setLineWidth(0.07);
+                doc.setDrawColor(211, 211, 211);
+                doc.line(margin + 0.5, y, pageWidth - margin - 0.5, y);
+                y += 1.5;
+                doc.setFont('helvetica', 'bold');
+                doc.setFontSize(28);
+                doc.text("Exporter", x, y);
+                y += 1.2;
+                
+                doc.setFont('helvetica', 'normal');
+                doc.setFontSize(28);
+                doc.text(exporterName, x, y);
+                y += 1.5;
+
+                doc.line(margin + 0.5, y, pageWidth - margin - 0.5, y);
+                y += 1.5;
+
+                doc.setFont('helvetica', 'bold');
+                doc.setFontSize(28);
+                doc.text(`INV. ${invoiceNum}`, x, y);
+                y += 2.5;
+                doc.setFont('helvetica', 'bold');
+                doc.setFontSize(52);
+                doc.text(
+                    `Pkt No. ${packetNum}/${total}`, 
+                    pageWidth / 2,
+                    y, 
+                    { align: 'center' }
+                );
+            }
+
+            labelForm.addEventListener('submit', (e) => {
+                e.preventDefault();
+                errorDiv.textContent = '';
+
+                try {
+                    const consigneeName = document.getElementById('consignee-name').value;
+                    const exporterName = document.getElementById('exporter-name').value;
+                    const invoiceNum = document.getElementById('invoice-num').value;
+                    const packetRangeStr = document.getElementById('packet-range').value;
+                    
+                    const packetInfo = parsePacketRange(packetRangeStr);
+                    const { start, end, total } = packetInfo;
+                    const doc = new jsPDF({
+                        orientation: 'landscape',
+                        unit: 'cm',
+                        format: 'a4'
+                    });
+                    
+                    const formData = { consigneeName, exporterName, invoiceNum };
+
+                    for (let i = start; i <= end; i++) {
+                        if (i > start) {
+                            doc.addPage();
+                        }
+                        createSingleLabelPage(doc, formData, i, total);
+                    }
+                    const pdfDataUri = doc.output('datauristring');
+                    pdfPreviewIframe.src = pdfDataUri;
+                    
+                    generatedDoc = doc;
+                    generatedFilename = `labels-${invoiceNum || 'export'}.pdf`;
+
+                    modal.classList.remove('hidden');
+
+                } catch (err) {
+                    console.error("Error generating PDF:", err);
+                    errorDiv.textContent = err.message;
+                }
+            });
+            function hideModal() {
+                modal.classList.add('hidden');
+                pdfPreviewIframe.src = 'about:blank';
+                generatedDoc = null;
+            }
+            closeModalBtn.addEventListener('click', hideModal);
+            closeModalFooterBtn.addEventListener('click', hideModal);
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) {
+                    hideModal();
+                }
+            });
+            downloadPdfBtn.addEventListener('click', () => {
+                if (generatedDoc) {
+                    generatedDoc.save(generatedFilename);
+                } else {
+                    console.error("No PDF document is available to download.");
+                }
+            });
+        });
+    </script>
+</body>
+</html>
+
